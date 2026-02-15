@@ -1,0 +1,270 @@
+// LandedSafe Database Schema
+// Postgres database for flight tracking, SMS consent, AI conversations, and FBO communications
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("POSTGRES_URL")
+}
+
+model User {
+  id            String      @id @default(cuid())
+  email         String      @unique
+  name          String?
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  aircraft      Aircraft[]
+  recipients    Recipient[]
+  trackingSessions Tracking[]
+  
+  @@map("users")
+}
+
+model Aircraft {
+  id          String   @id @default(cuid())
+  userId      String
+  tailNumber  String
+  nickname    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, tailNumber])
+  @@map("aircraft")
+}
+
+model Recipient {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  phoneNumber String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, phoneNumber])
+  @@map("recipients")
+}
+
+model Tracking {
+  id                  String   @id @default(cuid())
+  trackingId          String   @unique @default(cuid())
+  
+  // Flight details
+  tailNumber          String
+  icaoHex             String?
+  pilotPhone          String
+  destination         String?
+  
+  // Thresholds
+  speedThreshold      Int      @default(50)
+  descentThreshold    Int      @default(2000)
+  
+  // Status tracking
+  status              String   @default("monitoring") // monitoring, airborne, landed, cancelled
+  
+  // Flight data
+  departureAirport    String?
+  arrivalAirport      String?
+  takeoffTime         DateTime?
+  landingTime         DateTime?
+  lastPosition        Json?
+  lastGroundSpeed     Float?
+  lastAltitude        Int?
+  lastVerticalSpeed   Int?
+  lastUpdated         DateTime?
+  
+  // SMS consent
+  smsConsentGiven     Boolean  @default(false)
+  smsConsentText      String?  @db.Text
+  smsConsentTimestamp DateTime?
+  
+  // Metadata
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  userId              String?
+  
+  user                User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  notifications       NotificationLog[]
+  conversations       AiConversation[]
+  fboEmails           FboEmail[]
+  
+  @@index([status])
+  @@index([tailNumber])
+  @@index([trackingId])
+  @@map("tracking")
+}
+
+model SmsConsent {
+  id              String   @id @default(cuid())
+  phoneNumber     String   @unique
+  consentGiven    Boolean  @default(false)
+  consentText     String   @db.Text
+  consentDate     DateTime @default(now())
+  revokedAt       DateTime?
+  source          String?  // tracking_form, recipient_add, etc.
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([phoneNumber])
+  @@map("sms_consent")
+}
+
+model NotificationLog {
+  id              String   @id @default(cuid())
+  trackingId      String
+  
+  // Notification details
+  type            String   // welcome, takeoff, landing, emergency, ai_response
+  recipient       String   // phone number or email
+  channel         String   // sms, email
+  
+  // Content
+  message         String   @db.Text
+  subject         String?
+  
+  // Delivery status
+  status          String   // pending, sent, delivered, failed
+  sentAt          DateTime?
+  deliveredAt     DateTime?
+  failureReason   String?  @db.Text
+  
+  // Provider details
+  providerId      String?  // SIBT message ID, Mailgun message ID
+  providerResponse Json?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  tracking        Tracking @relation(fields: [trackingId], references: [id], onDelete: Cascade)
+  
+  @@index([trackingId])
+  @@index([recipient])
+  @@index([status])
+  @@map("notification_log")
+}
+
+model AiConversation {
+  id              String   @id @default(cuid())
+  trackingId      String
+  
+  // Message details
+  role            String   // user, assistant, system
+  content         String   @db.Text
+  
+  // Function calling
+  functionName    String?
+  functionArgs    Json?
+  functionResult  Json?
+  
+  // Metadata
+  tokens          Int?
+  model           String?
+  createdAt       DateTime @default(now())
+  
+  tracking        Tracking @relation(fields: [trackingId], references: [id], onDelete: Cascade)
+  
+  @@index([trackingId])
+  @@index([createdAt])
+  @@map("ai_conversations")
+}
+
+model FboEmail {
+  id                    String   @id @default(cuid())
+  trackingId            String
+  
+  // FBO details
+  fboName               String
+  fboEmail              String
+  airportCode           String
+  
+  // Email content
+  subject               String
+  body                  String   @db.Text
+  
+  // Pilot confirmation
+  draftShownAt          DateTime?
+  pilotConfirmedAt      DateTime?
+  pilotConfirmationText String?
+  
+  // Sending status
+  status                String   @default("draft") // draft, confirmed, sent, delivered, failed
+  sentAt                DateTime?
+  failureReason         String?  @db.Text
+  
+  // Provider details
+  mailgunId             String?
+  mailgunResponse       Json?
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  tracking              Tracking @relation(fields: [trackingId], references: [id], onDelete: Cascade)
+  
+  @@index([trackingId])
+  @@index([status])
+  @@map("fbo_emails")
+}
+
+model Airport {
+  id          String  @id @default(cuid())
+  icaoCode    String  @unique
+  iataCode    String?
+  name        String
+  city        String?
+  state       String?
+  country     String  @default("US")
+  
+  latitude    Float
+  longitude   Float
+  elevation   Int?
+  
+  timezone    String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  fbos        Fbo[]
+  
+  @@index([icaoCode])
+  @@index([iataCode])
+  @@map("airports")
+}
+
+model Fbo {
+  id            String   @id @default(cuid())
+  airportId     String
+  
+  name          String
+  email         String?
+  phone         String?
+  
+  // Services
+  fuelAvailable Boolean  @default(true)
+  crewCar       Boolean  @default(false)
+  maintenance   Boolean  @default(false)
+  
+  // Fuel pricing (cents per gallon)
+  avgas100ll    Int?
+  jetA          Int?
+  
+  // Last updated
+  fuelPriceUpdated DateTime?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  airport       Airport  @relation(fields: [airportId], references: [id], onDelete: Cascade)
+  
+  @@index([airportId])
+  @@map("fbos")
+}
